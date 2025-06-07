@@ -1,0 +1,214 @@
+                ; SECTOR SIZE IS 155, THIS INCLUDES A 1 BYTE SYNC CHAR
+                ; A 3 BYTE SECTOR HEADER AND A CHECKSUM BYTE
+                ; WE USE STANDARD 128 BYTE SECTOR SIZE
+                
+                
+                ; SECTOR SIZE IS 155, THIS INCLUDES A 1 BYTE SYNC CHAR
+                ; A 3 BYTE SECTOR HEADER AND A CHECKSUM BYTE
+                ; FOR WRITING, WE NEED AN ADDITIONAL 16 ZERO BYTES
+                ; FOR THE BOOT TRACKS, WE COULD USE A 150 BYTE PAYLOAD
+                ; BUT IT WOULD STILL NEED 4 TRACKS SO INSTEAD WE USE 128 BYTE SECTORS
+                
+                ;OFFSETS IN CPM.SYS
+                ;CCP: 0000H-0800H
+                ;BDOS:0800H-1600H	CCP+BDOS 44 SECTORS
+                ;BIOS:1600H-1C00H	BIOS	12 SECTORS MAX BUT CODE CURRENTLY ONLY 0X40F = 9 SECTORS
+                
+                
+                
+                ;TRACK 0 HAS RESERVED SECTOR FOR ROMLOADER
+                ;TRACK 0 SECTORS 0, 3 (AES103 LOGICAL TRACK 0 SECTOR 1) BOOTLOADER
+                ;TRACK 0 SECTOR 8 DIRECTORY FOR ROM
+                ;TRACK 0, SECTORS 9-15 (7), TRACK 1 SECTORS 0-15 (16), TRACK2 SECTORS 0-15 (16), TRACK 3 SECTORS 0-4:: C
+                ;TRACK 3 SECTORS 5-15 BIOS (11 MAX)
+                ;TRACK 4 DIRECTORY
+                ;AVAILABLE BLOCKS: (30 * 128 * 16) // 1024 = 60 (61440 USED)
+                
+ 0020 =         MSIZE	EQU	32	;CP/M VERSION MEMORY SIZE IN KILOBYTES
+                ;
+                ;	"BIAS" IS ADDRESS OFFSET FROM 3400H FOR MEMORY SYSTEMS
+                ;	THAN 16K (REFERRED TO AS "B" THROUGHOUT THE TEXT).
+                ;
+ 3000 =         BIAS	EQU	(MSIZE-20)*1024
+ 6400 =         CPMB	EQU	3400H+BIAS	;BASE OF CCP
+                ;CPMB    EQU     6400
+ 6C06 =         BDOS    EQU     806H+CPMB
+ 7E80 =         BDOSE   EQU     1A80H+CPMB
+ 7A00 =         BOOT    EQU     1600H+CPMB
+ 7A03 =         RBOOT   EQU     BOOT+3
+                
+ 009B =         SSIZ	EQU	155	;TOTAL SECTOR DATA SIZE
+ 0004 =         PRESIZ  EQU     4       ;NUMBER OF SECTOR HEADER BYTES BEFORE PAYLOAD
+ 0010 =         SECTRK	EQU	16      ;SECTORS PER TRACK
+ 0080 =         CPMSSIZ	EQU	128	;CP/M SECTOR SIZE
+                
+ 0200                   ORG     200H
+ 1A80 =         BDOS1   EQU     BDOSE-CPMB
+ 0004 =         NTRKS   EQU     4               ;TRACKS TO READ
+ 0035 =         BDOSS   EQU     BDOS1/CPMSSIZ       ;NUM SECTORS TO READ
+ 0200 =         STACK   EQU     200H
+                
+                ;IO PORT DEFINITIONS
+ 0003 =         PREMAP	EQU	03H
+ 0005 =         PSTAT	EQU	05H
+ 0011 =         PSYNRD	EQU 	11H
+ 0014 =         PSTEP 	EQU	14H
+ 0015 =         PSEC	EQU	15H
+ 0016 =         PCMD	EQU	16H
+ 0017 =         PACTIVE	EQU	17H
+ 0022 =         PRDADD	EQU	22H
+ 0023 =         PRDCNT	EQU	23H
+ 0028 =         PRMST	EQU	28H
+                
+                ;STATUS BITS
+ 0001 =         RDY1	EQU	01H
+ 0002 =         RDY2	EQU	02H
+ 0004 =         WRP1	EQU	04H
+ 0008 =         WRP2	EQU	08H
+ 0010 =         TRK0	EQU	10H
+ 0080 =         ACTIV	EQU	80H
+                
+                ;COMMAND BITS
+ 0001 =         HEAD1	EQU	01H
+ 0002 =         HEAD2	EQU	02H
+ 0004 =         MTR1	EQU	04H
+ 0008 =         MTR2	EQU	08H
+ 0010 =         ACTEN	EQU	10H
+ 0020 =         DIRUP	EQU	20H
+ 0040 =         WRITE	EQU	40H
+ 0080 =         SEL2	EQU	80H
+                
+                ;SYNCBYTE
+ 00DB =         SYNRD	EQU	0DBH
+                
+                START:
+ 0200 DB03      	IN	PREMAP			;MAP OUT BOOT ROM
+ 0202 310002            LXI     SP,STACK
+ 0205 110064            LXI     D, CPMB        ;DESTINATION IS START OF CCP
+                
+ 0208 3E05      	MVI	A, MTR1 OR HEAD1       ;START DISK 1       
+ 020A 32B402    	STA	CMDREG
+ 020D D316      	OUT	PCMD
+                
+                        ;WAIT FOR DISK TO BECOME READY
+                WTRDY:	
+ 020F DB05      	IN	PSTAT
+ 0211 E601      	ANI	RDY1
+ 0213 CA0F02    	JZ	WTRDY
+                
+                        ;SEEK TO TRACK 0
+ 0216 3AB402    	LDA     CMDREG
+ 0219 E6DF      	ANI     NOT DIRUP
+ 021B D316      	OUT     PCMD
+ 021D 32B402    	STA     CMDREG
+                WTTRZERO:                     
+ 0220 DB05      	IN      PSTAT
+ 0222 E610      	ANI     TRK0
+ 0224 C23102    	JNZ     ATZERO         
+ 0227 D314      	OUT     PSTEP
+ 0229 3E07      	MVI     A, 007H
+ 022B CDA702    	CALL    DELAY
+ 022E C32002    	JMP     WTTRZERO
+                
+                ATZERO:
+ 0231 3E00              MVI     A, 0
+ 0233 32B602            STA     TRCK
+ 0236 3E35              MVI     A, BDOSS        ;TOTAL NUMBER OF SECTORS TO READ
+ 0238 32B502            STA     SECREM
+                
+ 023B 0E09              MVI     C, 9            ;START AT SECTOR 9           
+                NEXT:           
+ 023D 21B702            LXI     H, SECBUF
+ 0240 79                MOV	A,C
+ 0241 D315      	OUT	PSEC		;SECTOR NUMBER
+ 0243 3EDB      	MVI	A, SYNRD
+ 0245 D311      	OUT	PSYNRD		; SYNC BYTE
+ 0247 3E42      	MVI	A, 042H ;DMA_MODESET_EN_CH1|DMA_MODESET_TCSTOP
+ 0249 D328      	OUT	PRMST		;DMA CONTROLLER MODE
+ 024B 3E9B      	MVI	A, SSIZ		
+ 024D D323      	OUT	PRDCNT		;NUMBER OF BYTES
+ 024F 3E40      	MVI	A, 040H		
+ 0251 D323      	OUT	PRDCNT		; DMA TO RAM
+ 0253 7D        	MOV	A,L             ;CURRENT PTR LOW
+ 0254 D322      	OUT	PRDADD
+ 0256 7C        	MOV	A,H             ;CURRENT POINTER HIGH
+ 0257 D322      	OUT	PRDADD
+ 0259 3AB402    	LDA	CMDREG
+ 025C F610      	ORI	ACTEN
+ 025E E6BF      	ANI 	NOT WRITE
+ 0260 32B402    	STA	CMDREG
+ 0263 D316      	OUT	PCMD
+ 0265 D317      	OUT	PACTIVE
+                	
+ 0267 DB05      RDWT:	IN	PSTAT
+ 0269 17        	RAL
+ 026A DA6702    	JC	RDWT
+                
+                        ;COPY TO DESTINATION
+                        
+                	;SKIP OVER SYNC + HEADER + "EXTRA" HEADER
+ 026D 79        	MOV	A,C		;NEED TO PRESERVE C
+ 026E 011600    	LXI	B, 22		;CLOBBERS C
+ 0271 09        	DAD	B
+ 0272 4F        	MOV	C,A		;RESTORE C
+ 0273 0680      	MVI     B, CPMSSIZ	;PAYLOAD SIZE, 128
+                CPYMEM:        
+ 0275 7E                MOV     A, M            ; LOAD FROM MEM HL
+ 0276 12        	STAX    D               ; STORE AT DE
+ 0277 23        	INX     H
+ 0278 13        	INX     D               ; INCREMENT POINTERS
+ 0279 05        	DCR     B               ; DECREMENT COUNT
+ 027A C27502    	JNZ     CPYMEM        ; LOAD FROM MEM HL
+                        
+                
+                        ;ARE WE DONE?
+ 027D 3AB502            LDA     SECREM
+ 0280 3D                DCR     A
+ 0281 CAA402            JZ      DONE
+ 0284 32B502            STA     SECREM
+                
+                NXTSEC:        
+                        ;NEXT SECTOR
+ 0287 0C                INR     C
+ 0288 79                MOV	A,C
+ 0289 FE10      	CPI	SECTRK			; LAST SECTOR REACHED?
+ 028B DA3D02    	JC	NEXT
+                
+                        ;NEXT TRACK
+ 028E 3AB402            LDA	CMDREG
+ 0291 F620      	ORI	DIRUP
+ 0293 D316      	OUT	PCMD
+ 0295 32B402    	STA 	CMDREG
+ 0298 D314      	OUT	PSTEP
+                	
+ 029A 3E07              MVI	A,7
+ 029C CDA702            CALL    DELAY
+                	
+                        ;START AT SECTOR 0 AGAIN
+ 029F 0E00              MVI     C, 0
+ 02A1 C33D02            JMP     NEXT
+                
+                        
+                DONE:
+ 02A4 C3007A            JMP     BOOT
+                
+                	;DELAY FOR STEP
+                DELAY:
+ 02A7 06CF      	MVI     B, 0CFH
+                INNER:                        
+ 02A9 E3        	XTHL
+ 02AA E3        	XTHL
+ 02AB 05        	DCR     B
+ 02AC C2A902    	JNZ     INNER
+ 02AF 3D        	DCR     A
+ 02B0 C2A702    	JNZ     DELAY
+ 02B3 C9                RET
+                
+                
+                
+                ;UNINITIALIZED DATA
+ 02B4           CMDREG:	DS	1
+ 02B5           SECREM: DS      1
+ 02B6           TRCK:   DS      1
+ 02B7           SECBUF:	DS	SSIZ
+

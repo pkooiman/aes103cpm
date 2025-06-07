@@ -1,0 +1,356 @@
+                ; GETSYS/PUTSYS FOR AES103
+                ; SECTOR SIZE IS 155, THIS INCLUDES A 1 BYTE SYNC CHAR
+                ; A 3 BYTE SECTOR HEADER AND A CHECKSUM BYTE
+                ; FOR WRITING, WE NEED AN ADDITIONAL 16 ZERO BYTES
+                ; FOR THE BOOT TRACKS, WE USE A 150 BYTE PAYLOAD
+                
+                ;OFFSETS IN CPM.SYS
+                ;CCP: 0000H-0800H
+                ;BDOS:0800H-1600H	CCP+BDOS 38 SECTORS = 1644H BYTES, 44H ZEROS AT START TO HAVE BIOS AT SECTOR BOUNDARY
+                ;BIOS:1600H-1C00H	BIOS	11 SECTORS MAX
+                
+                
+                
+                ;TRACK 0 HAS RESERVED SECTOR FOR ROMLOADER
+                ;TRACK 0 SECTORS 0, 1 BOOTLOADER
+                ;TRACK 0 SECTOR 8 DIRECTORY FOR ROM
+                ;TRACK 0, SECTORS 9-15 (7), TRACK 1 SECTORS 0-15 (16), TRACK2 SECTORS 0-14 (15):: CCP, BDOS, 44H=68 ZERO
+                ;TRACK 3 SECTORS 0-10 BIOS
+                
+                
+                
+ 0200           	ORG	0200H
+                	
+ 0014 =         MSIZE	EQU	20
+ 0096 =         PLSIZ	EQU	150	;SECTOR PAYLOAD SIZE
+ 009B =         SSIZ	EQU	155	;TOTAL SECTOR DATA SIZE
+ 0010 =         WRPRE	EQU	16	;WRITE PREAMBLE (ZEROES)
+ 0010 =         NUMSEQ	EQU	16
+ 0003 =         NUMTRK	EQU	3	;SYSTEM OCCUPIES 3 TRACKS
+                
+ 0000 =         BIAS	EQU	(MSIZE -20) * 1024
+ 3400 =         CCP	EQU	3400H+BIAS
+ 3C00 =         BDOS	EQU	CCP+0800H
+ 4A00 =         BIOS	EQU	CCP+1600H
+                
+                ;IO PORT DEFINITIONS
+ 0005 =         PSTAT	EQU	05H
+ 0010 =         PSYNWR	EQU	10H
+ 0011 =         PSYNRD	EQU 	11H
+ 0014 =         PSTEP 	EQU	14H
+ 0015 =         PSEC	EQU	15H
+ 0016 =         PCMD	EQU	16H
+ 0017 =         PACTIVE	EQU	17H
+ 0020 =         PWRADD	EQU	20H
+ 0021 =         PWRCNT	EQU	21H
+ 0022 =         PRDADD	EQU	22H
+ 0023 =         PRDCNT	EQU	23H
+ 0028 =         PRMST	EQU	28H
+                
+                ;STATUS BITS
+ 0001 =         RDY1	EQU	01H
+ 0002 =         RDY2	EQU	02H
+ 0004 =         WRP1	EQU	04H
+ 0008 =         WRP2	EQU	08H
+ 0010 =         TRK0	EQU	10H
+ 0080 =         ACTIV	EQU	80H
+                
+                ;COMMAND BITS
+ 0001 =         HEAD1	EQU	01H
+ 0002 =         HEAD2	EQU	02H
+ 0004 =         MTR1	EQU	04H
+ 0008 =         MTR2	EQU	08H
+ 0010 =         ACTEN	EQU	10H
+ 0020 =         DIRUP	EQU	20H
+ 0040 =         WRITE	EQU	40H
+ 0080 =         SEL2	EQU	80H
+                
+                ;SYNCBYTE
+ 00DB =         SYNRD	EQU	0DBH
+ 0000 =         SYNWR	EQU	00H
+                
+                GSTART:
+ 0200 318033    	LXI	SP,CCP-0080H
+ 0203 218033    	LXI	H,CCP-0080H		; START OF DESTINATION
+ 0206 CD5705    	CALL	STRTRDY
+ 0209 0600      	MVI	B,0			; START AT TRACK 0
+ 020B CD7305    	CALL	SEEKZERO
+                RD$TRK:
+ 020E 0E00      	MVI	C,0			; START AT SECTOR 0
+                RD$SEC:
+ 0210 CD0004    	CALL	READ$SEC
+ 0213 119600    	LXI	D,PLSIZ			; ADD SECTOR PAYLOAD SIZE TO DATA POINTER
+ 0216 19        	DAD	D
+ 0217 0C        	INR	C			; NEXT SECTOR
+ 0218 79        	MOV	A,C
+ 0219 FE10      	CPI	NUMSEQ			; LAST SECTOR REACHED?
+ 021B DA1002    	JC	RD$SEC
+                
+ 021E CD9505    	CALL	NEXTTRK
+ 0221 04        	INR	B
+ 0222 78        	MOV	A,B
+ 0223 FE03      	CPI	NUMTRK			; LAST TRACK REACHED?
+ 0225 DA0E02    	JC	RD$TRK
+                
+ 0228 76        	HLT
+                
+                
+ 0300           	ORG	($+0100H) AND 0FF00H	;PUTSYS AT NEXT PAGE BOUNDARY
+                
+                PUT$SYS:
+ 0300 318033    	LXI	SP,CCP-0080H
+ 0303 218033    	LXI	H,CCP-0080H		; START OF SOURCE DATA
+ 0306 CD5705    	CALL	STRTRDY
+ 0309 0600      	MVI	B,0			; START AT TRACK 0
+ 030B CD7305    	CALL	SEEKZERO
+                WR$TRK:
+ 030E 0E00      	MVI	C,0			; START AT SECTOR 0
+                WR$SEC:
+ 0310 CD0005    	CALL	WRITE$SEC
+ 0313 119600    	LXI	D,PLSIZ			; ADD SECTOR PAYLOAD SIZE TO DATA POINTER
+ 0316 19        	DAD	D
+ 0317 0C        	INR	C			; NEXT SECTOR
+ 0318 79        	MOV	A,C
+ 0319 FE10      	CPI	NUMSEQ			; LAST SECTOR REACHED?
+ 031B DA1003    	JC	WR$SEC
+                
+                	; NEXT TRACK
+ 031E CD9505    	CALL	NEXTTRK
+ 0321 04        	INR	B
+ 0322 78        	MOV	A,B
+ 0323 FE03      	CPI	NUMTRK			; LAST TRACK REACHED?
+ 0325 DA0E03    	JC	WR$TRK
+                
+ 0328 76        	HLT
+                
+ 0400           	ORG	($+0100H) AND 0FF00H	;NEXT PAGE BOUNDARY
+                
+                READ$SEC:
+                	; READ SECTOR
+                	; TRACK IN <B>
+                	; SECTOR IN <C>
+                	; DMAADDR IN <HL>
+                
+ 0400 C5        	PUSH 	B
+ 0401 E5        	PUSH	H
+                
+ 0402 79        	MOV	A,C
+ 0403 D315      	OUT	PSEC		;SECTOR NUMBER
+ 0405 3EDB      	MVI	A, SYNRD
+ 0407 D311      	OUT	PSYNRD		; SYNC BYTE
+ 0409 3E42      	MVI	A, 042H ;DMA_MODESET_EN_CH1|DMA_MODESET_TCSTOP
+ 040B D328      	OUT	PRMST		;DMA CONTROLLER MODE
+ 040D 3E9B      	MVI	A, SSIZ		
+ 040F D323      	OUT	PRDCNT		;NUMBER OF BYTES
+ 0411 3E40      	MVI	A, 040H		
+ 0413 D323      	OUT	PRDCNT		; DMA TO RAM
+ 0415 21BA05    	LXI	H, SECBUF	;READ TO TEMPORARY BUFFER
+ 0418 7D        	MOV	A,L
+ 0419 D322      	OUT	PRDADD
+ 041B 7C        	MOV	A,H
+ 041C D322      	OUT	PRDADD
+ 041E 3AB905    	LDA	CMDREG
+ 0421 F610      	ORI	ACTEN
+ 0423 E6BF      	ANI 	NOT WRITE
+ 0425 32B905    	STA	CMDREG
+ 0428 D316      	OUT	PCMD
+ 042A D317      	OUT	PACTIVE
+                	
+ 042C DB05      RDWT:	IN	PSTAT
+ 042E 17        	RAL
+ 042F DA2C04    	JC	RDWT
+                
+                	
+                	
+                	;SYNC AND HEADER
+ 0432 23        	INX	H	;NOW AT TRACK#
+ 0433 1602      	MVI	D,2
+ 0435 CDB005    	CALL 	CSCHK
+ 0438 CA3C04    	JZ      HEADOK
+ 043B 76        	HLT		;OOPS
+                HEADOK:	
+                	;HL NOW AT CHECKSUM BYTE
+ 043C 23        	INX	H	;NOW AT DATA
+                	
+ 043D E5        	PUSH	H 		;START ADDRESS FOR CHECKSUM
+ 043E 1696      	MVI	D, PLSIZ
+ 0440 CDB005    	CALL    CSCHK
+ 0443 E1        	POP	H		;RESTORE DST ADDRESS
+ 0444 CA4804    	JZ	DATAOK
+ 0447 76        	HLT			;OOPS
+                DATAOK:	
+ 0448 D1        	POP	D	;DESTINATION ADDRES
+ 0449 D5        	PUSH 	D
+                
+ 044A 0696      	MVI	B,PLSIZ
+ 044C CD8C05    	CALL	CPYMEM
+                
+ 044F E1        	POP	H
+ 0450 C1        	POP	B
+                
+ 0451 C9        	RET
+                
+ 0500           	ORG	($+0100H) AND 0FF00H	;NEXT PAGE BOUNDARY
+                
+                WRITE$SEC:
+                	; WRITE SECTOR
+                	; TRACK IN <B>
+                	; SECTOR IN <C>
+                	; DMAADDR IN <HL>
+                
+ 0500 C5        	PUSH 	B
+ 0501 E5        	PUSH	H
+                
+ 0502 79        	MOV	A,C
+ 0503 D315      	OUT	PSEC		;SECTOR NUMBER
+ 0505 3E00      	MVI	A, SYNWR
+ 0507 D310      	OUT	PSYNWR		; SYNC BYTE
+ 0509 3E41      	MVI	A, 041H ;DMA_MODESET_EN_CH0|DMA_MODESET_TCSTOP
+ 050B D328      	OUT	PRMST		;DMA CONTROLLER MODE
+ 050D 3EAB      	MVI	A, SSIZ	+ WRPRE	
+ 050F D321      	OUT	PWRCNT		;NUMBER OF BYTES
+ 0511 3E80      	MVI	A, 080H		
+ 0513 D321      	OUT	PWRCNT		; DMA FROM RAM
+ 0515 21BA05    	LXI	H, SECBUF	;WRITE FROM TEMPORARY BUFFER
+ 0518 7D        	MOV	A,L
+ 0519 D320      	OUT	PWRADD
+ 051B 7C        	MOV	A,H
+ 051C D320      	OUT	PWRADD
+                
+                	; BUILD TEMPORARY BUFFER
+ 051E 1610      	MVI	D, WRPRE		;16 ZERO BYTES AT START	
+ 0520 CDA705    	CALL	ZEROMEM		;LEAVES HL POINTING TO RIGHT AFTER ZEROES
+ 0523 3EDB      	MVI	A,SYNRD
+ 0525 77        	MOV	M, A		;SYNC BYTE
+ 0526 23        	INX	H
+ 0527 70        	MOV	M, B		;TRACK
+ 0528 23        	INX	H
+ 0529 71        	MOV	M, C		;SECTOR
+ 052A 2B        	DCX	H		;POINT TO TRACK AGAIN
+ 052B 1602      	MVI	D,2
+ 052D CDB005    	CALL 	CSCHK
+ 0530 77        	MOV	M, A		;CHECKSUM
+ 0531 23        	INX	H
+                
+                	
+ 0532 D1        	POP	D	;SOURCE ADDRES
+ 0533 D5        	PUSH 	D
+ 0534 EB        	XCHG
+ 0535 D5        	PUSH	D	;START ADDRESS FRO CHECKSUM CALCULATION
+ 0536 0696      	MVI	B,PLSIZ
+ 0538 CD8C05    	CALL	CPYMEM
+                
+ 053B E1        	POP	H 		;START ADDRESS FOR CHECKSUM
+ 053C 1696      	MVI	D, PLSIZ
+ 053E CDB005    	CALL    CSCHK
+ 0541 77        	MOV	M, A		;CHECKSUM
+                	
+                
+                	
+ 0542 3AB905    	LDA	CMDREG
+ 0545 F650      	ORI	ACTEN OR WRITE 
+ 0547 32B905    	STA	CMDREG
+ 054A D316      	OUT	PCMD
+ 054C D317      	OUT	PACTIVE
+                	
+ 054E DB05      WRTWT:	IN	PSTAT
+ 0550 17        	RAL
+ 0551 DA4E05    	JC	WRTWT
+                
+ 0554 E1        	POP	H
+ 0555 C1        	POP	B
+                
+ 0556 C9        	RET
+                
+                ;START DISK1 AND WAIT FOR READY
+                STRTRDY:
+ 0557 3E00      	MVI	A, MTR1 AND HEAD1
+ 0559 32B905    	STA	CMDREG
+ 055C D316      	OUT	PCMD
+                WTRDY:	
+ 055E DB05      	IN	PSTAT
+ 0560 E601      	ANI	RDY1
+ 0562 C25E05    	JNZ	WTRDY
+ 0565 C9        	RET
+                
+                ;DELAY
+                DELAY:
+                
+ 0566 1ECF      	MVI     E, 0CFH
+                INNER:                        
+ 0568 E3        	XTHL
+ 0569 E3        	XTHL
+ 056A 1D        	DCR     E
+ 056B C26805    	JNZ     INNER
+ 056E 3D        	DCR     A
+ 056F C26605    	JNZ     DELAY
+ 0572 C9        	RET
+                
+                
+                SEEKZERO:
+ 0573 3AB905    	LDA     CMDREG
+ 0576 E6DF      	ANI     NOT DIRUP
+ 0578 D316      	OUT     PCMD
+ 057A 32B905    	STA     CMDREG
+                WAITZERO:                     
+ 057D DB05      	IN      PSTAT
+ 057F E610      	ANI     TRK0
+ 0581 C0        	RNZ         
+ 0582 D314      	OUT     PSTEP
+ 0584 3E07      	MVI     A, 007H
+ 0586 CD6605    	CALL    DELAY
+ 0589 C37D05    	JMP     WAITZERO
+                
+                
+                CPYMEM:
+ 058C 7E        	MOV     A, M            ; LOAD FROM MEM HL
+ 058D 12        	STAX    D               ; STORE AT DE
+ 058E 23        	INX     H
+ 058F 13        	INX     D               ; INCREMENT POINTERS
+ 0590 05        	DCR     B               ; DECREMENT COUNT
+ 0591 C28C05    	JNZ     CPYMEM        ; LOAD FROM MEM HL
+ 0594 C9        	RET
+                
+                
+                ; NEXT TRACK
+                NEXTTRK:
+ 0595 3AB905    	LDA	CMDREG
+ 0598 F620      	ORI	DIRUP
+ 059A D316      	OUT	PCMD
+ 059C 32B905    	STA 	CMDREG
+ 059F D314      	OUT	PSTEP
+ 05A1 3E07      	MVI	A,7
+ 05A3 CD6605    	CALL	DELAY
+ 05A6 C9        	RET
+                
+                ;ZERO MEMORY AT HL, FOR D BYTES
+                ;CLOBBERS DE
+                ZEROMEM:
+ 05A7 1E00      	MVI     E, 0
+                ZERLOOP:
+ 05A9 73        	MOV     M, E
+ 05AA 23        	INX     H
+ 05AB 15        	DCR     D
+ 05AC C2A905    	JNZ     ZERLOOP
+ 05AF C9        	RET
+                
+                ;CALCULATE AND CHECK CHECKSUM
+                ;DATA IN HL, SIZE IN D
+                ;RETURNS WITH CALCULATED CHECKSUM IN A
+                ;HL POINTER CHECKSUM BYTE
+                ;ZERO FLAG SET IF CHECKSUM OK
+                CSCHK:
+ 05B0 97        	SUB     A
+                CSLOOP: 
+ 05B1 86        	ADD     M               ; ADD TO CHECKSUM
+ 05B2 23        	INX     H               ; INCREMENT PTR
+ 05B3 15        	DCR     D               ; DECREMENT COUNT
+ 05B4 C2B105    	JNZ     CSLOOP         ; ADD VALUE AT PTR HL TO A
+ 05B7 BE        	CMP     M               ; COMPARE SUM IN A WITH BYTE AT PTR
+ 05B8 C9        	RET
+                
+                
+                ;UNINITIALIZED DATA
+ 05B9           CMDREG:	DS	1
+ 05BA           SECBUF:	DS	SSIZ + WRPRE
+

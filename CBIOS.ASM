@@ -9,7 +9,7 @@
 ;offsets in cpm.sys
 ;CCP: 0000h-0800h
 ;BDOS:0800h-1600h	CCP+BDOS 44 sectors
-;BIOS:1600h-1C00h	BIOS	12 sectors max but code currently only 0x40f = 9 sectors
+;BIOS:1600h-1C00h	BIOS	12 sectors max but code (minus uninit data)  currently only 0x451 = 9 sectors
 
 
 
@@ -102,13 +102,13 @@ flon		equ	08h
 floff		equ	00h
 
 ;keyboard buffer
-kbbufsiz	equ	12
+kbbufsiz	equ	8
 
 ;irq controller status register value to set
 irqstval	equ	5
 
 ;size for interrupt stack
-inststksiz	equ	16
+inststksiz	equ	8
 
 
 ;	jump vector for individual subroutines
@@ -317,7 +317,7 @@ conout: ;console character output from register c
 	mov	m,a	;output character
 	jmp	chkxy
 carret:
-	mvi	a,0
+	xra	a	;clear accumulator
 	sta	scrx
 	jmp	chkxy
 backsp
@@ -348,7 +348,7 @@ chkxy:
 	lda	scrx
 	cpi	80
 	jc	chky
-	mvi	a,0
+	xra	a	;clear accumulator
 	sta	scrx	;back to x=0
 	lda	scry
 	inr	a
@@ -681,12 +681,11 @@ waitzero:
 atzero:
 	lda     cmdreg	;figure out which drive is current
 	ani	sel2	;and set current track to 0
-	mvi	a,0
-	jnz	zerodisk2
-	sta	curtrd1
-	ret
-zerodisk2:	
-	sta	curtrd2
+	lxi	h, curtrd1	;drive 1 current, point hl to cur track disk 1
+	jz	zer0	;is drive 1 current?
+	inx	h	;hl now points to cur track disk 2
+zer0:
+	mvi	m,0
 	ret
 
 	; seek current disk to track in "track"
@@ -874,6 +873,7 @@ sector:	ds	2	;two bytes for expansion
 dmaad:	ds	2	;direct memory address
 diskno:	ds	1	;disk number 0-15
 
+;Next two must be kept together
 curtrd1: ds	1	;current track disk 1
 curtrd2: ds	1	;current track disk 2
 
